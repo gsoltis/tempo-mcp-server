@@ -164,6 +164,9 @@ Once configured, you can use the tools in Claude with queries like:
 * "Find traces from the frontend service in Tempo using query `{service.name=\"frontend\"}`"
 * "Show me the most recent 50 traces from Tempo with `{http.status_code=500}`"
 
+<img width="991" alt="Screenshot 2025-04-11 at 5 24 03 PM" src="https://github.com/user-attachments/assets/bcb1fb78-5532-48ab-ada2-4857f6f22514" />
+
+
 ## License
 
 This project is licensed under the MIT License. 
