@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// Initialize a logger that writes to stderr instead of stdout
+var logger = log.New(os.Stderr, "[tempo-mcp] ", log.LstdFlags)
 
 // TempoResult represents the structure of Tempo query results
 type TempoResult struct {
@@ -82,7 +86,7 @@ func NewTempoQueryTool() mcp.Tool {
 func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract parameters
 	queryString := request.Params.Arguments["query"].(string)
-	fmt.Printf("Received Tempo query request: %s\n", queryString)
+	logger.Printf("Received Tempo query request: %s", queryString)
 
 	// Get Tempo URL from request arguments, if not present check environment
 	var tempoURL string
@@ -95,7 +99,7 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 			tempoURL = DefaultTempoURL
 		}
 	}
-	fmt.Printf("Using Tempo URL: %s\n", tempoURL)
+	logger.Printf("Using Tempo URL: %s", tempoURL)
 
 	// Extract authentication parameters
 	var username, password, token string
@@ -135,19 +139,19 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		limit = int(limitVal)
 	}
 
-	fmt.Printf("Query parameters - start: %d, end: %d, limit: %d\n", start, end, limit)
+	logger.Printf("Query parameters - start: %d, end: %d, limit: %d", start, end, limit)
 
 	// Build query URL
 	queryURL, err := buildTempoQueryURL(tempoURL, queryString, start, end, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build query URL: %v", err)
 	}
-	fmt.Printf("Query URL: %s\n", queryURL)
+	logger.Printf("Query URL: %s", queryURL)
 
 	// Execute query with authentication
 	result, err := executeTempoQuery(ctx, queryURL, username, password, token)
 	if err != nil {
-		fmt.Printf("Query execution error: %v\n", err)
+		logger.Printf("Query execution error: %v", err)
 		return nil, fmt.Errorf("query execution failed: %v", err)
 	}
 
@@ -167,8 +171,8 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		},
 	}
 
-	// Log the final response structure
-	fmt.Printf("Final tool result content: %+v\n", toolResult.Content)
+	// Log summary to stderr
+	logger.Printf("Query returned %d traces", len(result.Traces))
 
 	return toolResult, nil
 }
@@ -280,17 +284,71 @@ func executeTempoQuery(ctx context.Context, queryURL, username, password, token 
 		return nil, fmt.Errorf("HTTP error: %d - %s", resp.StatusCode, string(body))
 	}
 
+	// Log to stderr instead of stdout
+	logger.Printf("Tempo raw response length: %d bytes", len(body))
+
+	// Clean response if needed to ensure valid JSON
+	cleanedBody := cleanTempoResponse(body)
+
 	// Parse JSON response
 	var result TempoResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Printf("ERROR parsing Tempo JSON response: %v\n", err)
-		fmt.Printf("Raw body: %s\n", string(body))
-		return nil, err
+	if err := json.Unmarshal(cleanedBody, &result); err != nil {
+		logger.Printf("ERROR parsing Tempo JSON response: %v", err)
+		logger.Printf("Raw body: %s", string(cleanedBody)[:min(100, len(cleanedBody))])
+
+		// Fall back to a more forgiving approach with generic JSON
+		var genericResult map[string]interface{}
+		genericErr := json.Unmarshal(cleanedBody, &genericResult)
+		if genericErr != nil {
+			// Return the original error if we can't even parse as generic JSON
+			return nil, err
+		}
+
+		// Convert the generic result to our structured format
+		convertedResult := &TempoResult{}
+
+		// Try to extract traces array
+		if tracesRaw, ok := genericResult["traces"]; ok {
+			if tracesArr, ok := tracesRaw.([]interface{}); ok {
+				for _, traceRaw := range tracesArr {
+					if traceMap, ok := traceRaw.(map[string]interface{}); ok {
+						trace := TempoTrace{}
+
+						// Extract fields safely
+						if id, ok := traceMap["traceID"].(string); ok {
+							trace.TraceID = id
+						}
+						if svc, ok := traceMap["rootServiceName"].(string); ok {
+							trace.RootServiceName = svc
+						}
+						if name, ok := traceMap["rootTraceName"].(string); ok {
+							trace.RootTraceName = name
+						}
+						if start, ok := traceMap["startTimeUnixNano"].(string); ok {
+							trace.StartTimeUnixNano = start
+						}
+						if dur, ok := traceMap["durationMs"].(float64); ok {
+							trace.DurationMs = int64(dur)
+						}
+
+						// Add to result
+						convertedResult.Traces = append(convertedResult.Traces, trace)
+					}
+				}
+			}
+		}
+
+		// Extract error if present
+		if errStatus, ok := genericResult["error"].(string); ok {
+			convertedResult.ErrorStatus = errStatus
+		}
+
+		// Use the converted result
+		result = *convertedResult
+		logger.Printf("Used fallback JSON parsing for result")
 	}
 
-	// Log the entire response for debugging
-	fmt.Printf("Tempo raw response: %s\n", string(body))
-	fmt.Printf("Tempo parsed result: %+v\n", result)
+	logger.Printf("Tempo result parsed successfully: %d traces", len(result.Traces))
 
 	// Check for Tempo errors
 	if result.ErrorStatus != "" {
@@ -300,14 +358,37 @@ func executeTempoQuery(ctx context.Context, queryURL, username, password, token 
 	return &result, nil
 }
 
+// cleanTempoResponse cleans potentially problematic JSON from Tempo
+func cleanTempoResponse(input []byte) []byte {
+	// Convert to string for easier manipulation
+	responseStr := string(input)
+
+	// Check for common issues in Tempo's response
+	if strings.HasSuffix(responseStr, "}]") {
+		// This is likely a valid array ending
+	} else if strings.HasSuffix(responseStr, "]}") {
+		// This is likely a valid object ending
+	} else if strings.Contains(responseStr, "}],") && strings.HasSuffix(responseStr, "}") {
+		// This looks valid
+	} else if strings.Contains(responseStr, "}]\"") {
+		// Fix escaped quote issue by removing the escaped quotes
+		responseStr = strings.Replace(responseStr, "}]\"", "}]", -1)
+	} else if strings.Contains(responseStr, "}]}\"") {
+		// Fix escaped quote issue
+		responseStr = strings.Replace(responseStr, "}]}\"", "}]}", -1)
+	}
+
+	return []byte(responseStr)
+}
+
 // formatTempoResults formats the Tempo query results into a readable string
 func formatTempoResults(result *TempoResult) (string, error) {
-	fmt.Printf("Formatting result with %d traces\n", len(result.Traces))
+	logger.Printf("Formatting result with %d traces", len(result.Traces))
 
 	if len(result.Traces) == 0 {
 		// Log metrics data if present
 		if result.Metrics != nil {
-			fmt.Printf("Metrics data: %+v\n", result.Metrics)
+			logger.Printf("Metrics data: %+v", result.Metrics)
 		}
 		return "No traces found matching the query", nil
 	}
@@ -344,7 +425,18 @@ func formatTempoResults(result *TempoResult) (string, error) {
 		output.WriteString("\n")
 	}
 
-	formattedOutput := output.String()
-	fmt.Printf("Formatted output: %s\n", formattedOutput)
+	// Get the formatted string but make sure we don't add a trailing newline that could mess up JSON
+	formattedOutput := strings.TrimSuffix(output.String(), "\n")
+
+	// Log to stderr
+	logger.Printf("Formatted output length: %d chars", len(formattedOutput))
 	return formattedOutput, nil
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

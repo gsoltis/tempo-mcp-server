@@ -20,10 +20,11 @@ compactor:
 storage:
   trace:
     backend: local
-    block:
-      bloom_filter_false_positive: .05
     local:
-      path: /tmp/tempo/blocks
+      path: /tmp/tempo/traces
     pool:
       max_workers: 100
-      queue_depth: 10000 
+      queue_depth: 10000
+
+overrides:
+  metrics_generator_processors: [service-graphs, span-metrics] 
