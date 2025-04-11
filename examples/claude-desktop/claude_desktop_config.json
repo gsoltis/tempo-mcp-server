@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "temposerver": {
+      "command": "path/to/tempo-mcp-server",
+      "args": [],
+      "env": {
+        "TEMPO_URL": "http://localhost:3200"
+      },
+      "disabled": false,
+      "autoApprove": ["tempo_query"]
+    }
+  }
+} 

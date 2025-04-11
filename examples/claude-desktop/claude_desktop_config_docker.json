@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "temposerver": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-e", "TEMPO_URL=http://host.docker.internal:3200", "tempo-mcp-server:latest"],
+      "disabled": false,
+      "autoApprove": ["tempo_query"]
+    }
+  }
+} 
