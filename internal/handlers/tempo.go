@@ -145,13 +145,21 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		return nil, fmt.Errorf("query execution failed: %v", err)
 	}
 
-	// Format results
-	formattedResult, err := formatTempoResults(result)
+	// Format text result
+	formattedTextResult, err := formatTempoResults(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to format results: %v", err)
 	}
 
-	return mcp.NewToolResultText(formattedResult), nil
+	// Create result with text content - use the right format for the tool result
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: formattedTextResult,
+			},
+		},
+	}, nil
 }
 
 // parseTime converts a time string to a time.Time
@@ -211,8 +219,11 @@ func buildTempoQueryURL(baseURL, query string, start, end int64, limit int) (str
 	// Add query parameters
 	q := u.Query()
 	q.Set("q", query)
-	q.Set("start", fmt.Sprintf("%d", start*1000000000)) // Convert to nanoseconds
-	q.Set("end", fmt.Sprintf("%d", end*1000000000))     // Convert to nanoseconds
+
+	// Just use Unix epoch seconds directly - no conversion needed
+	// The API expects raw seconds since epoch
+	q.Set("start", fmt.Sprintf("%d", start))
+	q.Set("end", fmt.Sprintf("%d", end))
 	q.Set("limit", fmt.Sprintf("%d", limit))
 	u.RawQuery = q.Encode()
 
@@ -263,6 +274,8 @@ func executeTempoQuery(ctx context.Context, queryURL, username, password, token 
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
+
+	fmt.Printf("Tempo result: %+v\n", result)
 
 	// Check for Tempo errors
 	if result.ErrorStatus != "" {

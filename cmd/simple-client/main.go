@@ -26,11 +26,16 @@ func main() {
 	tool := os.Args[1]
 	query := os.Args[2]
 
-	// Create request - using the tool name directly as the method
+	// Create request using the tools/call method format
 	request := MCPRequest{
-		ID:      "simple-client-1",
-		Method:  tool,
-		Params:  map[string]interface{}{"query": query},
+		ID:     "simple-client-1",
+		Method: "tools/call",
+		Params: map[string]interface{}{
+			"name": tool,
+			"arguments": map[string]interface{}{
+				"query": query,
+			},
+		},
 		JsonRPC: "2.0",
 	}
 

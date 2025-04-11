@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -44,56 +45,94 @@ func main() {
 		os.Exit(1)
 	}
 
-	method := os.Args[1]
+	toolName := os.Args[1]
 
 	// Prepare the request parameters based on the method
 	var params interface{}
 
-	switch method {
+	switch toolName {
 	case "tempo_query":
-		params = parseTempoQueryParams(os.Args[2:])
+		// Create parameters with tool parameters
+		toolParams := parseTempoQueryParams(os.Args[2:])
+
+		// Create the full parameters object for tools/call method
+		params = map[string]interface{}{
+			"name":      toolName,
+			"arguments": toolParams,
+		}
 	default:
-		log.Fatalf("Unknown method: %s", method)
+		log.Fatalf("Unknown tool: %s", toolName)
 	}
 
-	// Create the request
+	// Create the request with tools/call method
 	request := MCPRequest{
 		ID:      "test-1",
-		Method:  method,
+		Method:  "tools/call",
 		Params:  params,
 		JsonRPC: "2.0",
 	}
 
-	// Encode the request
+	// Check if we're in response mode via environment variable
+	clientMode := os.Getenv("MCP_CLIENT_MODE")
+	if clientMode == "RESPONSE" || os.Args[1] == "TEST_RESPONSE_MODE" {
+		// We're in response processing mode
+		log.Println("Processing response mode")
+
+		// Read response from stdin
+		responseBytes, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			log.Fatalf("Error reading response: %v", err)
+		}
+
+		// If we have no response data, exit
+		if len(responseBytes) == 0 {
+			log.Println("No response data received")
+			return
+		}
+
+		// Print first 200 chars of the raw response for debugging
+		responseStr := string(responseBytes)
+		debugLen := 200
+		if len(responseStr) < debugLen {
+			debugLen = len(responseStr)
+		}
+		log.Printf("Raw response (first %d chars): %s", debugLen, responseStr[:debugLen])
+
+		// Decode the response
+		var response MCPResponse
+		if err := json.Unmarshal(responseBytes, &response); err != nil {
+			log.Fatalf("Error decoding response: %v", err)
+		}
+
+		// Check for errors
+		if response.Error != nil {
+			log.Fatalf("MCP error: [%d] %s", response.Error.Code, response.Error.Message)
+		}
+
+		// Pretty print the result if available
+		if len(response.Result) > 0 {
+			var result interface{}
+			if err := json.Unmarshal(response.Result, &result); err != nil {
+				log.Fatalf("Error parsing result: %v", err)
+			}
+
+			prettyResult, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				log.Fatalf("Error formatting result: %v", err)
+			}
+
+			fmt.Println(string(prettyResult))
+		} else {
+			log.Println("Response contains no result data")
+		}
+		return
+	}
+
+	// If we reach here, we're in request generation mode
 	encoder := json.NewEncoder(os.Stdout)
 	if err := encoder.Encode(request); err != nil {
 		log.Fatalf("Error encoding request: %v", err)
 	}
-
-	// Read the response
-	decoder := json.NewDecoder(os.Stdin)
-	var response MCPResponse
-	if err := decoder.Decode(&response); err != nil {
-		log.Fatalf("Error decoding response: %v", err)
-	}
-
-	// Check for errors
-	if response.Error != nil {
-		log.Fatalf("MCP error: [%d] %s", response.Error.Code, response.Error.Message)
-	}
-
-	// Pretty print the result
-	var result interface{}
-	if err := json.Unmarshal(response.Result, &result); err != nil {
-		log.Fatalf("Error parsing result: %v", err)
-	}
-
-	prettyResult, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		log.Fatalf("Error formatting result: %v", err)
-	}
-
-	fmt.Println(string(prettyResult))
 }
 
 // parseTempoQueryParams parses command line arguments for Tempo query
@@ -112,14 +151,38 @@ func parseTempoQueryParams(args []string) map[string]interface{} {
 		log.Fatal("Query is required")
 	}
 
-	// Optional start time
-	if len(args) >= 1 {
-		params["start"] = args[0]
+	// Optional start time - default is 15 minutes ago
+	if len(args) >= 1 && args[0] != "" {
+		// We could use the string directly, but for timestamps we want to be careful
+		// to avoid overflow on the server side
+		if strings.HasPrefix(args[0], "-") {
+			// Keep the relative time format
+			params["start"] = args[0]
+		} else if args[0] == "now" {
+			params["start"] = args[0]
+		} else {
+			// Get recent small timestamp value
+			params["start"] = "-5m"
+		}
+	} else {
+		// Default to 5 minutes ago - a small relative time
+		params["start"] = "-5m"
 	}
 
-	// Optional end time
-	if len(args) >= 2 {
-		params["end"] = args[1]
+	// Optional end time - default is now
+	if len(args) >= 2 && args[1] != "" {
+		if strings.HasPrefix(args[1], "-") {
+			// Keep the relative time format
+			params["end"] = args[1]
+		} else if args[1] == "now" {
+			params["end"] = args[1]
+		} else {
+			// Default to now
+			params["end"] = "now"
+		}
+	} else {
+		// Default to now
+		params["end"] = "now"
 	}
 
 	// Optional limit
@@ -130,6 +193,9 @@ func parseTempoQueryParams(args []string) map[string]interface{} {
 			log.Fatalf("Invalid limit: %s", args[2])
 		}
 		params["limit"] = limit
+	} else {
+		// Default limit
+		params["limit"] = 20.0
 	}
 
 	return params
