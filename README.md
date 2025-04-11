@@ -91,6 +91,11 @@ The Tempo query tool supports the following environment variables:
 
 * `TEMPO_URL`: Default Tempo server URL to use if not specified in the request
 
+## Testing
+```
+./run-client.sh tempo_query "{resource.service.name=\\\"example-service\\\"}"
+```
+
 ## Using with Claude Desktop
 
 You can use this MCP server with Claude Desktop to add Tempo query tools. Follow these steps:

@@ -23,7 +23,7 @@ fi
 # Build the original client if it doesn't exist
 if [ ! -f ./tempo-mcp-client ]; then
   echo "Building client..."
-  go build -o tempo-mcp-client cmd/client/main.go
+  go build -o tempo-mcp-client ../cmd/client/main.go
   if [ $? -ne 0 ]; then
     echo "Failed to build client"
     exit 1
@@ -33,7 +33,7 @@ fi
 # Build the server if it doesn't exist
 if [ ! -f ./tempo-mcp-server ]; then
   echo "Building server..."
-  go build -o tempo-mcp-server cmd/server/main.go
+  go build -o tempo-mcp-server ../cmd/server/main.go
   if [ $? -ne 0 ]; then
     echo "Failed to build server"
     exit 1
@@ -47,7 +47,7 @@ export TEMPO_URL="http://localhost:3200"
 
 # Extract parameters
 QUERY="$2"
-START="-5m"
+START="-5h"
 END="now"
 LIMIT=20
 
@@ -88,14 +88,31 @@ cat "$REQUEST_FILE" | ./tempo-mcp-server > "$RESPONSE_FILE"
 echo "Processing response..."
 RESPONSE_JSON=$(cat "$RESPONSE_FILE")
 
-# Check if the response contains an error
-if echo "$RESPONSE_JSON" | grep -q "error"; then
+# First, check if the response contains an error
+if echo "$RESPONSE_JSON" | grep -q "\"error\":{"; then
   ERROR_MSG=$(echo "$RESPONSE_JSON" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
   echo "Error: $ERROR_MSG"
   exit 1
 fi
 
-# Otherwise, pretty print the result
-echo "$RESPONSE_JSON" | grep -o '"text":"[^"]*"' | cut -d'"' -f4
+# Debugging - print the full response
+echo "Full response:"
+echo "$RESPONSE_JSON"
+
+# Extract the text content - need to handle the nested structure
+TEXT_CONTENT=$(echo "$RESPONSE_JSON" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"//g' | sed 's/"$//g')
+
+# If we couldn't extract text with grep, try a more flexible approach
+if [ -z "$TEXT_CONTENT" ]; then
+  # Try to extract any content between "text":"" using awk
+  TEXT_CONTENT=$(echo "$RESPONSE_JSON" | awk -F'"text":"' '{print $2}' | awk -F'"' '{print $1}')
+fi
+
+# Output the extracted content
+if [ -n "$TEXT_CONTENT" ]; then
+  echo "$TEXT_CONTENT"
+else
+  echo "No readable content found in response"
+fi
 
 echo "Query completed successfully." 

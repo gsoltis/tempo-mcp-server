@@ -82,6 +82,7 @@ func NewTempoQueryTool() mcp.Tool {
 func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract parameters
 	queryString := request.Params.Arguments["query"].(string)
+	fmt.Printf("Received Tempo query request: %s\n", queryString)
 
 	// Get Tempo URL from request arguments, if not present check environment
 	var tempoURL string
@@ -94,6 +95,7 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 			tempoURL = DefaultTempoURL
 		}
 	}
+	fmt.Printf("Using Tempo URL: %s\n", tempoURL)
 
 	// Extract authentication parameters
 	var username, password, token string
@@ -133,15 +135,19 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		limit = int(limitVal)
 	}
 
+	fmt.Printf("Query parameters - start: %d, end: %d, limit: %d\n", start, end, limit)
+
 	// Build query URL
 	queryURL, err := buildTempoQueryURL(tempoURL, queryString, start, end, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build query URL: %v", err)
 	}
+	fmt.Printf("Query URL: %s\n", queryURL)
 
 	// Execute query with authentication
 	result, err := executeTempoQuery(ctx, queryURL, username, password, token)
 	if err != nil {
+		fmt.Printf("Query execution error: %v\n", err)
 		return nil, fmt.Errorf("query execution failed: %v", err)
 	}
 
@@ -152,14 +158,19 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	}
 
 	// Create result with text content - use the right format for the tool result
-	return &mcp.CallToolResult{
+	toolResult := &mcp.CallToolResult{
 		Content: []mcp.Content{
 			mcp.TextContent{
 				Type: "text",
 				Text: formattedTextResult,
 			},
 		},
-	}, nil
+	}
+
+	// Log the final response structure
+	fmt.Printf("Final tool result content: %+v\n", toolResult.Content)
+
+	return toolResult, nil
 }
 
 // parseTime converts a time string to a time.Time
@@ -272,10 +283,14 @@ func executeTempoQuery(ctx context.Context, queryURL, username, password, token 
 	// Parse JSON response
 	var result TempoResult
 	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Printf("ERROR parsing Tempo JSON response: %v\n", err)
+		fmt.Printf("Raw body: %s\n", string(body))
 		return nil, err
 	}
 
-	fmt.Printf("Tempo result: %+v\n", result)
+	// Log the entire response for debugging
+	fmt.Printf("Tempo raw response: %s\n", string(body))
+	fmt.Printf("Tempo parsed result: %+v\n", result)
 
 	// Check for Tempo errors
 	if result.ErrorStatus != "" {
@@ -287,7 +302,13 @@ func executeTempoQuery(ctx context.Context, queryURL, username, password, token 
 
 // formatTempoResults formats the Tempo query results into a readable string
 func formatTempoResults(result *TempoResult) (string, error) {
+	fmt.Printf("Formatting result with %d traces\n", len(result.Traces))
+
 	if len(result.Traces) == 0 {
+		// Log metrics data if present
+		if result.Metrics != nil {
+			fmt.Printf("Metrics data: %+v\n", result.Metrics)
+		}
 		return "No traces found matching the query", nil
 	}
 
@@ -323,5 +344,7 @@ func formatTempoResults(result *TempoResult) (string, error) {
 		output.WriteString("\n")
 	}
 
-	return output.String(), nil
+	formattedOutput := output.String()
+	fmt.Printf("Formatted output: %s\n", formattedOutput)
+	return formattedOutput, nil
 }
