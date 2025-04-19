@@ -31,7 +31,18 @@ Or run directly with Go:
 go run ./cmd/server
 ```
 
-The server communicates using stdin/stdout following the Model Context Protocol (MCP). This makes it suitable for use with Claude Desktop and other MCP-compatible clients. It does not run as an HTTP server on a port.
+The server now supports two modes of communication:
+1. Standard input/output (stdin/stdout) following the Model Context Protocol (MCP)
+2. HTTP Server with Server-Sent Events (SSE) endpoint for integration with tools like n8n
+
+The default port for the HTTP server is 8080, but can be configured using the `SSE_PORT` environment variable.
+
+## Server Endpoints
+
+When running in HTTP mode, the server exposes the following endpoints:
+
+- SSE Endpoint: `http://localhost:8080/sse` - For real-time event streaming
+- MCP Endpoint: `http://localhost:8080/mcp` - For MCP protocol messaging
 
 ## Docker Support
 
@@ -42,7 +53,7 @@ You can build and run the MCP server using Docker:
 docker build -t tempo-mcp-server .
 
 # Run the server
-docker run --rm -i tempo-mcp-server
+docker run -p 8080:8080 --rm -i tempo-mcp-server
 ```
 
 Alternatively, you can use Docker Compose for a complete test environment:
@@ -90,6 +101,7 @@ The `tempo_query` tool allows you to query Grafana Tempo trace data:
 The Tempo query tool supports the following environment variables:
 
 * `TEMPO_URL`: Default Tempo server URL to use if not specified in the request
+* `SSE_PORT`: Port for the HTTP/SSE server (default: 8080)
 
 ## Testing
 ```
@@ -155,6 +167,21 @@ You can also integrate the Tempo MCP server with the Cursor editor. To do this, 
   }
 }
 ```
+
+## Using with n8n
+
+To use the Tempo MCP server with n8n, you can connect to it using the MCP Client Tool node:
+
+1. Add an **MCP Client Tool** node to your n8n workflow
+2. Configure the node with these parameters:
+   - **SSE Endpoint**: `http://your-server-address:8080/sse` (replace with your actual server address)
+   - **Authentication**: Choose appropriate authentication if needed
+   - **Tools to Include**: Choose which Tempo tools to expose to the AI Agent
+
+3. Connect the MCP Client Tool node to an AI Agent node that will use the Tempo querying capabilities
+
+Example workflow:
+Trigger → MCP Client Tool (Tempo server) → AI Agent (Claude)
 
 ## Example Usage
 

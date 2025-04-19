@@ -46,6 +46,9 @@ services:
       dockerfile: Dockerfile
     environment:
       - TEMPO_URL=http://tempo:3200
+      - SSE_PORT=8080
+    ports:
+      - "8080:8080"   # SSE/MCP endpoint
     depends_on:
       tempo:
         condition: service_healthy 

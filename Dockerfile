@@ -22,5 +22,8 @@ WORKDIR /app
 # Copy the binary from the builder stage
 COPY --from=builder /app/tempo-mcp-server .
 
+# Expose the default port for SSE server
+EXPOSE 8080
+
 # Set the entrypoint
 ENTRYPOINT ["./tempo-mcp-server"] 
