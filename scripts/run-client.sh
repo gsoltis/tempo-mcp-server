@@ -115,4 +115,4 @@ else
   echo "No readable content found in response"
 fi
 
-echo "Query completed successfully." 
+echo "Query completed successfully."

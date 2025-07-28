@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/scottlepp/tempo-mcp-server/internal/common"
 )
 
 // Initialize a logger that writes to stderr instead of stdout
@@ -37,48 +36,28 @@ type TempoTrace struct {
 	Attributes        map[string]string `json:"attributes,omitempty"`
 }
 
-// Environment variable name for Tempo URL
-const EnvTempoURL = "TEMPO_URL"
 
-// Default Tempo URL when environment variable is not set
-const DefaultTempoURL = "http://localhost:3200"
 
 // NewTempoQueryTool creates and returns a tool for querying Grafana Tempo
 func NewTempoQueryTool() mcp.Tool {
-	// Get Tempo URL from environment variable or use default
-	tempoURL := os.Getenv(EnvTempoURL)
-	if tempoURL == "" {
-		tempoURL = DefaultTempoURL
-	}
-
 	return mcp.NewTool("tempo_query",
-		mcp.WithDescription("Run a query against Grafana Tempo"),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Tempo query string"),
-		),
-		mcp.WithString("url",
-			mcp.Description(fmt.Sprintf("Tempo server URL (default: %s from %s env var)", tempoURL, EnvTempoURL)),
-			mcp.DefaultString(tempoURL),
-		),
-		mcp.WithString("username",
-			mcp.Description("Username for basic authentication"),
-		),
-		mcp.WithString("password",
-			mcp.Description("Password for basic authentication"),
-		),
-		mcp.WithString("token",
-			mcp.Description("Bearer token for authentication"),
-		),
-		mcp.WithString("start",
-			mcp.Description("Start time for the query (default: 1h ago)"),
-		),
-		mcp.WithString("end",
-			mcp.Description("End time for the query (default: now)"),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of traces to return (default: 20)"),
-		),
+		append(
+			common.ConnectionParams(),
+			mcp.WithDescription("Run a query against Grafana Tempo"),
+			mcp.WithString("query",
+				mcp.Required(),
+				mcp.Description("Tempo query string"),
+			),
+			mcp.WithString("start",
+				mcp.Description("Start time for the query (default: 1h ago)"),
+			),
+			mcp.WithString("end",
+				mcp.Description("End time for the query (default: now)"),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum number of traces to return (default: 20)"),
+			),
+		)...
 	)
 }
 
@@ -88,30 +67,7 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	queryString := request.Params.Arguments["query"].(string)
 	logger.Printf("Received Tempo query request: %s", queryString)
 
-	// Get Tempo URL from request arguments, if not present check environment
-	var tempoURL string
-	if urlArg, ok := request.Params.Arguments["url"].(string); ok && urlArg != "" {
-		tempoURL = urlArg
-	} else {
-		// Fallback to environment variable
-		tempoURL = os.Getenv(EnvTempoURL)
-		if tempoURL == "" {
-			tempoURL = DefaultTempoURL
-		}
-	}
-	logger.Printf("Using Tempo URL: %s", tempoURL)
 
-	// Extract authentication parameters
-	var username, password, token string
-	if usernameArg, ok := request.Params.Arguments["username"].(string); ok {
-		username = usernameArg
-	}
-	if passwordArg, ok := request.Params.Arguments["password"].(string); ok {
-		password = passwordArg
-	}
-	if tokenArg, ok := request.Params.Arguments["token"].(string); ok {
-		token = tokenArg
-	}
 
 	// Set defaults for optional parameters
 	start := time.Now().Add(-1 * time.Hour).Unix()
@@ -142,14 +98,15 @@ func HandleTempoQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	logger.Printf("Query parameters - start: %d, end: %d, limit: %d", start, end, limit)
 
 	// Build query URL
-	queryURL, err := buildTempoQueryURL(tempoURL, queryString, start, end, limit)
+	body, err := common.MakeTempoRequest(ctx, logger, request, func(tempoURL string) (string, error) {
+		return buildTempoQueryURL(tempoURL, queryString, start, end, limit)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to build query URL: %v", err)
+		return nil, fmt.Errorf("failed to make Tempo request: %v", err)
 	}
-	logger.Printf("Query URL: %s", queryURL)
 
 	// Execute query with authentication
-	result, err := executeTempoQuery(ctx, queryURL, username, password, token)
+	result, err := parseTempoResponse(ctx, body)
 	if err != nil {
 		logger.Printf("Query execution error: %v", err)
 		return nil, fmt.Errorf("query execution failed: %v", err)
@@ -246,46 +203,7 @@ func buildTempoQueryURL(baseURL, query string, start, end int64, limit int) (str
 }
 
 // executeTempoQuery sends the HTTP request to Tempo
-func executeTempoQuery(ctx context.Context, queryURL, username, password, token string) (*TempoResult, error) {
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add authentication if provided
-	if token != "" {
-		// Bearer token authentication
-		req.Header.Add("Authorization", "Bearer "+token)
-	} else if username != "" || password != "" {
-		// Basic authentication
-		req.SetBasicAuth(username, password)
-	}
-
-	// Execute request
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// Read response
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check for HTTP errors
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP error: %d - %s", resp.StatusCode, string(body))
-	}
-
-	// Log to stderr instead of stdout
-	logger.Printf("Tempo raw response length: %d bytes", len(body))
+func parseTempoResponse(ctx context.Context, body []byte) (*TempoResult, error) {
 
 	// Clean response if needed to ensure valid JSON
 	cleanedBody := cleanTempoResponse(body)
