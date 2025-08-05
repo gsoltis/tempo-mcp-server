@@ -5,7 +5,7 @@
 # Display usage if no arguments provided
 if [ $# -lt 2 ]; then
   echo "Usage:"
-  echo "  ./run-client.sh tempo_trace \"<trace_id>\""
+  echo "  ./run-client.sh tempo_trace \"<trace_id>\" [\"<filename>\"]"
   echo ""
   echo "Examples:"
   echo "  ./run-client.sh tempo_trace <id>"
@@ -44,10 +44,8 @@ echo "Starting with query: ${2}"
 export TEMPO_URL="http://localhost:3200"
 
 # Extract parameters
-QUERY="$2"
-START="-5h"
-END="now"
-LIMIT=20
+TRACE_ID="$2"
+FILENAME="$3"
 
 # If additional arguments are provided, use them
 if [ $# -ge 3 ]; then
@@ -63,7 +61,7 @@ if [ $# -ge 5 ]; then
 fi
 
 # Create the request JSON directly
-REQUEST="{\"id\":\"client-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"tempo_trace\",\"arguments\":{\"trace_id\":\"$QUERY\"}},\"jsonrpc\":\"2.0\"}"
+REQUEST="{\"id\":\"client-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"tempo_trace\",\"arguments\":{\"trace_id\":\"$TRACE_ID\",\"filename\":\"$FILENAME\"}},\"jsonrpc\":\"2.0\"}"
 
 # Create temp files
 REQUEST_FILE=$(mktemp)
